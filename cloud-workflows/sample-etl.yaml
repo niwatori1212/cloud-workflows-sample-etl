@@ -1,0 +1,104 @@
+main:
+  params: [args]
+  steps:
+    - initialize:
+        assign:
+          - query_timeout: 360
+          - current_jst_date: ${default(map.get(args, "jstDate"), text.split(time.format(sys.now() - (86400 * 3), "Asia/Tokyo"), "T")[0])}
+          - project_id: ${sys.get_env("GOOGLE_CLOUD_PROJECT_ID")}
+          - project_number: ${sys.get_env("GOOGLE_CLOUD_PROJECT_NUMBER")}
+          - transfer_job_id: ${sys.get_env("TRANSFER_JOB_ID")} 
+    - import_raw_data_to_bigquery:
+        steps:
+          - execute_storage_transfer:
+              call: http.post
+              args:
+                url: ${"https://asia-northeast1-"+project_id+".cloudfunctions.net/run-storage-transfer"}
+                body:
+                  project_id: ${project_id}
+                  transfer_job_name: ${"transferJobs/"+transfer_job_id}
+                auth:
+                  type: OIDC
+                timeout: 600
+          - execute_storage_to_bigquery_transfer:
+              call: execute_transfer
+              args:
+                transfer_display_name: "transfer_raw_data"
+                query_timeout: ${query_timeout}
+                current_jst_date: ${current_jst_date}
+                project_id: ${project_id}
+                project_number: ${project_number}
+    - generate_data:
+        steps:
+          - assign_value:
+              assign:
+                - data_transfer_configs:
+                    - transfer_display_name: "sample_data_a"
+                    - transfer_display_name: "sample_data_b"
+                - ret_val: []
+          - execute_sample_transfers:
+              parallel:
+                shared: [ ret_val ]
+                for:
+                  value: data_transfer_config
+                  in: ${data_transfer_configs}
+                  steps:
+                    - execute_transfer:
+                        call: execute_transfer
+                        args:
+                          transfer_display_name: ${data_transfer_config.transfer_display_name}
+                          query_timeout: ${query_timeout}
+                          current_jst_date: ${current_jst_date}
+                          project_id: ${project_id}
+                          project_number: ${project_number}
+    - finalize:
+        return: "SUCCEEDED"                
+
+execute_transfer:
+  params: [transfer_display_name, query_timeout, current_jst_date, project_id, project_number]
+  steps:
+    - start_transfer:
+        call: http.post
+        args:
+          url: ${"https://asia-northeast1-"+project_id+".cloudfunctions.net/start-bigquery-data-transfer"}
+          body:
+            transfer_display_name: ${transfer_display_name}
+            jst_data: ${current_jst_date}
+            project_number: ${project_number}
+          auth:
+            type: OIDC
+        result: run_name
+    - check_transfer_status:
+        steps:
+          - init_transfer:
+              assign:
+                - elapsed_time: 0
+                - timeout: ${query_timeout}
+          - check_status:
+              call: http.post
+              args:
+                url: ${"https://asia-northeast1-"+project_id+".cloudfunctions.net/check-bigquery-data-transfer-status"}
+                body:
+                  run_name: ${run_name.body}
+                auth:
+                  type: OIDC
+              result: status
+    - check_if_complete:
+        switch:
+          - condition: ${status.body == "SUCCEEDED"}
+            assign:
+              - dummy: "dummy"
+          - condition: ${elapsed_time >= timeout}
+            raise: "Job timed out"    
+          - condition: ${status.body == "RUNNING" OR status.body == "PENDING"} 
+            steps:
+              - update_elapsed:
+                  assign:
+                    - elapsed_time: ${elapsed_time+30}
+              - execute_sleep:
+                  call: sys.sleep
+                  args:
+                    seconds: 10
+                  next: check_status
+          - condition: True
+            raise: "Job error"

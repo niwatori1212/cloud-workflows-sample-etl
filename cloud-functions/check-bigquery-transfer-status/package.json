@@ -1,0 +1,25 @@
+{
+  "name": "check-bigquery-data-transfer-status",
+  "version": "'1.0.0",
+  "description": "",
+  "main": "dist/app.js",
+  "scripts": {
+    "clean": "rimraf dist",
+    "build": "tsc",
+    "deploy": "gcloud functions deploy check-bigquery-data-transfer-status --trigger-http --runtime=nodejs20 --source=. --entry-point=checkBigQueryDataTransferStatus --service-account=workflows-sample@$(gcloud config get-value project).iam.gserviceaccount.com",
+    "dev": "concurrently \"npm run dev:*\"",
+    "dev:build": "tsc -w",
+    "dev:functions": "functions-framework --target=checkBigQueryDataTransferStatus"
+  },
+  "dependencies": {
+    "@google-cloud/bigquery-data-transfer": "^4.1.0",
+    "@types/express": "^4.17.21",
+    "@types/node": "^20",
+    "typescript": "^5"
+  },
+  "devDependencies": {
+    "@google-cloud/functions-framework": "^3.3.0",
+    "concurrently": "^8.2.2",
+    "ts-node": "^10.9.2"
+  }
+}
